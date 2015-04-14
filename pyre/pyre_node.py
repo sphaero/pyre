@@ -53,6 +53,13 @@ class PyreNode(object):
 
     # def __del__(self):
         # destroy beacon
+        
+    def gossip_start(self):
+        if not self.gossip:
+            self.beacon_port = 0
+            self.gossip = ZActor(ZGossip, self.name)
+            if self.verbose:
+                self.gossip.send_unicode("VERBOSE")
 
     def start(self):
         # TODO: If application didn't bind explicitly, we grab an ephemeral port
@@ -98,8 +105,26 @@ class PyreNode(object):
 
             self.beacon_socket = self.beacon.resolve()
             self.poller.register(self.beacon_socket, zmq.POLLIN)
-        #else:
-        # TODO: gossip stuff
+        else:
+            # Start gossip discovery
+            # ------------------------------------------------------------------
+            # If application didn't set an endpoint explicitly, grab ephemeral
+            # port on all available network interfaces.
+            if not self.endpoint:
+                iface = zsys_interface()
+                if not iface:
+                    iface = "*"
+                self.port = self.inbox.bind_to_random_port("tcp://%s:*", iface)
+                assert(self.port > 0) # Die on bad interface or port exhaustion
+                hostname = zsys_hostname()
+                self.endpoint = "tcp://%s:%d" %(hostname, self.port)
+                
+            assert(self.gossip)
+            self.gossip.send_unicode("PUBLISH", zmq.SNDMORE)
+            self.gossip.send_unicode(self.uuid.hex, zmq.SNDMORE)
+            self.gossip.send_unicode(self.endpoint)
+            # Start polling on zgossip
+            self.poller.register(self.gossip.resolve())
 
         # Start polling on inbox
         self.poller.register(self.inbox, zmq.POLLIN)
@@ -158,17 +183,25 @@ class PyreNode(object):
             self.beacon_port = int(request.pop(0))
         elif command == "SET INTERVAL":
             self.interval = int(request.pop(0))
-        #elif command == "SET ENDPOINT":
-            # TODO: gossip start and endpoint setting
-        # TODO: GOSSIP BIND, GOSSIP CONNECT
-        #elif command == "BIND":
-        #    # TODO: Needs a wait-signal
-        #    endpoint = request.pop(0).decode('UTF-8')
-        #    self.bind(endpoint)
-        #elif command == "CONNECT":
-        #    # TODO: Needs a wait-signal
-        #    endpoint = request.pop(0).decode('UTF-8')
-        #    self.connect(endpoint)
+        elif command == "SET ENDPOINT":
+            self.gossip_start()
+            endpoint = request.pop(0).decode('utf-8')
+            try:
+                self.inbox.bind(endpoint)
+            except Exception as e:
+                self._pipe.signal(1)
+            else:
+                self.endpoint = endpoint
+                self._pipe.signal()
+        elif command == "GOSSIP BIND":
+            self.gossip_start()
+            self.gossip_bind = request.pop(0).decode('UTF-8')
+            self.gossip.send_unicode("BIND", zmq.SNDMORE)
+            self.gossip.send_unicode(self.gossip_bind)
+        elif command == "CONNECT":
+            self.gossip_connect = request.pop(0).decode('UTF-8')
+            self.gossip.send_unicode("CONNECT", zmq.SNDMORE)
+            self.gossip.send_unicode(self.gossip_connect)
         elif command == "START":
             # zsock_signal (self->pipe, zyre_node_start (self));
             self.start()
@@ -463,7 +496,15 @@ class PyreNode(object):
                 logger.warning(self.peers)
                 logger.warning("We don't know peer id {0}".format(peer_id))
 
-    # TODO: Handle gossip dat
+    #  Handle gossip data
+    def recv_gossip(self):
+        msg = self.gossip.recv_multipart()
+        command = msg.pop(0)
+        if command == "DELIVER":
+            uuidstr = msg.pop(0)
+            endpoint = msg.pop(0)
+            if endpoint != self.endpoint:
+                self.require_peer(uuid.UUID(uuidstr), endpoint)
 
     # We do this once a second:
     # - if peer has gone quiet, send TCP ping
