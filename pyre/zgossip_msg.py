@@ -56,8 +56,8 @@ class ZGossipMsg(object):
         self._ceiling = 0           # Valid upper limit for read pointer
         self.key = ""               # Tuple key, globally unique
         self.value = None           # Tuple value, as printable string
-        self.ttl                    # Time to live, msecs
-        self.struct_data            # bytes of data
+        self.ttl = 0                # Time to live, msecs
+        self.struct_data = b''      # bytes of data
 
     def recv(self, insocket):
         """

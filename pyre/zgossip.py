@@ -69,83 +69,87 @@
 
 # Writing this while drunk, turn on enhanced issue scanning
 
-class ZGossip(object):
-	
-	def __init__(self, *args, **kwargs):
-		self.pipe
-		self.config
-		self.remotes = []
-		self.tuples = {}
-		self.cur_tuple = None
-		
-		#engine_configure (self, "server/timeout", "1000");
-		self.message = ZGossipMsg()
+from .zgossip_msg import ZGossipMsg
 
-	def server_connect(self, endpoint):
-		self.remote = zmq.socket(zmq.DEALER)
-		# Never block on sending; we use an infinite HWM and buffer as many
-		# messages as needed in outgoing pipes. Note that the maximum number
-		# is the overall tuple set size.
+class ZGossip(object):
+    
+    def __init__(self, ctx, pipe, *args, **kwargs):
+        self.ctx = ctx 
+        self.pipe = pipe
+        self.config = None
+        self.remotes = []
+        self.tuples = {}
+        self.cur_tuple = None
+        
+        #engine_configure (self, "server/timeout", "1000");
+        self.message = ZGossipMsg()
+
+    def server_connect(self, endpoint):
+        self.remote = zmq.socket(ctx, zmq.DEALER)
+        # Never block on sending; we use an infinite HWM and buffer as many
+        # messages as needed in outgoing pipes. Note that the maximum number
+        # is the overall tuple set size.
         self.remote.set_hwm(0)
         self.remote.connect(endpoint)
             
-		# Send HELLO and then PUBLISH for each tuple we have
-		gossip = ZGossipMsg(ZGossipMsg.HELLO)
-		gossip.send(remote)
-		for key, value in self.tuples:
-			gossip.set_id(ZGossipMsg.PUBLISH)
-			gossip.set_key(key)
-			gossip.set_value(value)
-			gossip.send(remote)
-		# Now monitor this remote for incoming messages
-		self.handle_socket()
+        # Send HELLO and then PUBLISH for each tuple we have
+        gossip = ZGossipMsg(ZGossipMsg.HELLO)
+        gossip.send(remote)
+        for key, value in self.tuples:
+            gossip.set_id(ZGossipMsg.PUBLISH)
+            gossip.set_key(key)
+            gossip.set_value(value)
+            gossip.send(remote)
+        # Now monitor this remote for incoming messages
+        self.handle_socket()
         #TODO: WHAT IS THIS? zlistx_add_end (self->remotes, remote);
-		
-	# Process an incoming tuple on this server.
-	def server_accept(key, value):
-		old_val = self.tuples.get(key)
-		if old_val == value:
-			return		# Duplicate tuple, do nothing
+        
+    # Process an incoming tuple on this server.
+    def server_accept(key, value):
+        old_val = self.tuples.get(key)
+        if old_val == value:
+            return      # Duplicate tuple, do nothing
 
-		# Store new tuple
-		self.tuples[key] = value
-		
-		# Deliver to calling application
-		self.pipe.send_unicode("DELIVER", zmq.SNDMORE)
-		self.pipe.send_unicode(key)
-		self.pipe.send_unicode(value)
-		
-		# Hold in server context so we can broadcast to all clients
-		self.cur_tuple = self.tuples.get(key)
-		#TODO: engine_broadcast_event (self, NULL, forward_event);
-		
-		# Copy new tuple announcement to all remotes
-		gossip = ZGossipMsg(ZGossipMsg.PUBLISH)
-		for remote in self.remotes:
-			gossip.set_key = key
-			gossip.set_value = value
-			gossip.send(remote)
+        # Store new tuple
+        self.tuples[key] = value
+        
+        # Deliver to calling application
+        self.pipe.send_unicode("DELIVER", zmq.SNDMORE)
+        self.pipe.send_unicode(key)
+        self.pipe.send_unicode(value)
+        
+        # Hold in server context so we can broadcast to all clients
+        self.cur_tuple = self.tuples.get(key)
+        #TODO: engine_broadcast_event (self, NULL, forward_event);
+        
+        # Copy new tuple announcement to all remotes
+        gossip = ZGossipMsg(ZGossipMsg.PUBLISH)
+        for remote in self.remotes:
+            gossip.set_key = key
+            gossip.set_value = value
+            gossip.send(remote)
 
-	# Process server API method, return reply message if any
-	def server_method(self, method, msg):
-		reply = None
-		if method == "CONNECT":
-			endpoint = msg.pop(0)
-			server_connect(endpoint)
-		elif method == "PUBLISH":
-			key = msg.pop(0)
-			val = msg.pop(0)
-			self.server_accept(key, val)
-		elif method == "STATUS":
-			# Return number of tuples we have stored
-			reply = zmsg_new ()
-			assert (reply)
-			zmsg_addstr (reply, "STATUS")
-			zmsg_addstrf (reply, "%d", (int) zhashx_size (self->tuples))
-		else:
-			logger.debug("unknown zgossip method '%s'"% method)
+    # Process server API method, return reply message if any
+    def server_method(self, method, msg):
+        reply = None
+        if method == "CONNECT":
+            endpoint = msg.pop(0)
+            server_connect(endpoint)
+        elif method == "PUBLISH":
+            key = msg.pop(0)
+            val = msg.pop(0)
+            self.server_accept(key, val)
+        elif method == "STATUS":
+            pass
+            # TODO: Return number of tuples we have stored
+            #reply = zmsg_new ()
+            #assert (reply)
+            #zmsg_addstr (reply, "STATUS")
+            #zmsg_addstrf (reply, "%d", (int) zhashx_size (self->tuples))
+        else:
+            logger.debug("unknown zgossip method '%s'"% method)
 
-		return reply
+        return reply
 
     # Lots of stuff here I don't know what to do with yet
     
@@ -155,7 +159,7 @@ class ZGossip(object):
         if msg.id == ZGossipMsg.PUBLISH:
             self.server_accept(msg.key, msg.value)
             
-        elif msg.id = ZGossipMsg.INVALID:
+        elif msg.id == ZGossipMsg.INVALID:
             # Connection was reset, so send HELLO again
             msg.id = ZGossipMsg.HELLO
             msg.send(remote)

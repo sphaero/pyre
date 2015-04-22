@@ -79,21 +79,21 @@ class Pyre(object):
         self.actor.send_unicode("SET ENDPOINT", zmq.SNDMORE)
         self.actor.send_unicode(endpoint)
 
-	# --------------------------------------------------------------------------
-	# Set-up gossip discovery of other nodes. At least one node in the cluster
-	# must bind to a well-known gossip endpoint, so other nodes can connect to
-	# it. Note that gossip endpoints are completely distinct from Zyre node
-	# endpoints, and should not overlap (they can use the same transport).
-	def gossip_bind(self, bind) 
-		self.actor.send_unicode("GOSSIP BIND", zmq.SNDMORE)
+    # --------------------------------------------------------------------------
+    # Set-up gossip discovery of other nodes. At least one node in the cluster
+    # must bind to a well-known gossip endpoint, so other nodes can connect to
+    # it. Note that gossip endpoints are completely distinct from Zyre node
+    # endpoints, and should not overlap (they can use the same transport).
+    def gossip_bind(self, bind):
+        self.actor.send_unicode("GOSSIP BIND", zmq.SNDMORE)
         self.actor.send_unicode(bind)
 
-	# --------------------------------------------------------------------------
-	# Set-up gossip discovery of other nodes. A node may connect to multiple
-	# other nodes, for redundancy paths. For details of the gossip network
-	# design, see the CZMQ zgossip class.
-	def gossip_connect(self, connect):
-		self.actor.send_unicode("GOSSIP CONNECT", zmq.SNDMORE)
+    # --------------------------------------------------------------------------
+    # Set-up gossip discovery of other nodes. A node may connect to multiple
+    # other nodes, for redundancy paths. For details of the gossip network
+    # design, see the CZMQ zgossip class.
+    def gossip_connect(self, connect):
+        self.actor.send_unicode("GOSSIP CONNECT", zmq.SNDMORE)
         self.actor.send_unicode(connect)
 
     def start(self):
