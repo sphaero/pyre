@@ -77,18 +77,18 @@ class ZGossip(object):
 		self.remotes = []
 		self.tuples = {}
 		self.cur_tuple = None
-		self.message = None
 		
 		#engine_configure (self, "server/timeout", "1000");
-		#self->message = zgossip_msg_new ();
+		self.message = ZGossipMsg()
 
 	def server_connect(self, endpoint):
 		self.remote = zmq.socket(zmq.DEALER)
 		# Never block on sending; we use an infinite HWM and buffer as many
 		# messages as needed in outgoing pipes. Note that the maximum number
 		# is the overall tuple set size.
-		#TODO:zsock_set_unbounded (remote);
-		self.remote.connect(endpoint)
+        self.remote.set_hwm(0)
+        self.remote.connect(endpoint)
+            
 		# Send HELLO and then PUBLISH for each tuple we have
 		gossip = ZGossipMsg(ZGossipMsg.HELLO)
 		gossip.send(remote)
@@ -99,6 +99,7 @@ class ZGossip(object):
 			gossip.send(remote)
 		# Now monitor this remote for incoming messages
 		self.handle_socket()
+        #TODO: WHAT IS THIS? zlistx_add_end (self->remotes, remote);
 		
 	# Process an incoming tuple on this server.
 	def server_accept(key, value):
@@ -129,11 +130,11 @@ class ZGossip(object):
 	def server_method(self, method, msg):
 		reply = None
 		if method == "CONNECT":
-			endpoint = msg.pop()
+			endpoint = msg.pop(0)
 			server_connect(endpoint)
 		elif method == "PUBLISH":
-			key = msg.pop()
-			val = msg.pop()
+			key = msg.pop(0)
+			val = msg.pop(0)
 			self.server_accept(key, val)
 		elif method == "STATUS":
 			# Return number of tuples we have stored
@@ -145,3 +146,19 @@ class ZGossip(object):
 			logger.debug("unknown zgossip method '%s'"% method)
 
 		return reply
+
+    # Lots of stuff here I don't know what to do with yet
+    
+    # Handle messages coming from remotes
+    def remote_handler(self, remote):
+        msg = self.gossip.recv()
+        if msg.id == ZGossipMsg.PUBLISH:
+            self.server_accept(msg.key, msg.value)
+            
+        elif msg.id = ZGossipMsg.INVALID:
+            # Connection was reset, so send HELLO again
+            msg.id = ZGossipMsg.HELLO
+            msg.send(remote)
+        
+        elif msg.id == ZGossipMsg.PONG:
+            pass    # Do nothing with PONGs
