@@ -27,9 +27,9 @@ class ZGossipTest(unittest.TestCase):
         self.node1.send_unicode("BIND", zmq.SNDMORE)
         self.node1.send_unicode("inproc://zgossip")
         
-        client = zmq.Socket(ctx, zmq.DEALER)
-        client.setsockopt(zmq.RCVTIMEO, 2000)
-        client.connect("inproc://zgossip")
+        self.client = zmq.Socket(ctx, zmq.DEALER)
+        self.client.setsockopt(zmq.RCVTIMEO, 2000)
+        self.client.connect("inproc://zgossip")
         
     # end setUp
 
@@ -40,12 +40,12 @@ class ZGossipTest(unittest.TestCase):
     def test_ping_pong(self):
         # Send HELLO, which gets no message
         msg = ZGossipMsg(ZGossipMsg.HELLO)
-        msg.send(client)
+        msg.send(self.client)
         
         # Send PING, expect PONG back
         msg.id = ZGossipMsg.PING
-        msg.send(client)
-        msg.recv(client)
+        msg.send(self.client)
+        msg.recv(self.client)
         assertTrue(msg.id == ZGossipMsg.PONG)
 
 # end ZGossipTest
@@ -59,6 +59,7 @@ if __name__ == '__main__':
     ch.setLevel(logging.DEBUG)
     logger.addHandler(ch)
     logging.getLogger("pyre.zgossip").setLevel(logging.DEBUG)
+    logging.getLogger("pyre.zgossip_msg").setLevel(logging.DEBUG)
     
     try:
         unittest.main()

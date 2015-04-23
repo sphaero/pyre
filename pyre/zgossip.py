@@ -72,6 +72,9 @@
 from .zgossip_msg import ZGossipMsg
 import random
 import zmq
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Client(object):
     # State machine constants
@@ -110,19 +113,32 @@ class Client(object):
         ]
 
     
-    def __init__(self):
+    def __init__(self, server, routing_id):
         self.client = None
-        self.server =  None
+        self.server = server
         self.hashkey = None
-        self.routing_id = None
+        self.routing_id = routing_id
         self.unique_id = None
-        self.state = None
-        self.event = None # current event
+        self.state = 0
+        self.event = Client.NULL_event # current event
         self.next_event = None
         self.exception = None
         self.wakeup = 0
         self.ticket = None
         self.log_prefix = None
+        
+    # TODO make a LUT
+    # similar to s_protocol_event
+    def _get_event(self, msg):
+        if msg.id == ZGossipMsg.HELLO:
+            return Client.hello_event;
+        elif msg.id == ZGossipMsg.PUBLISH:
+            return Client.publish_event;
+        elif msg.id == ZGossipMsg.PING:
+            return Client.ping_event;
+        else:
+            # Invalid zgossip_msg_t
+            return Client.terminate_event;
 
     def execute(self, event):
         
@@ -278,7 +294,8 @@ class ZGossip(object):
         self.remotes = []
         self.tuples = {}
         self.cur_tuple = None
-
+        self.terminated = False
+        
         # from zproto engine
         self.router = zmq.Socket(self.ctx, zmq.ROUTER)
         # TODO: zsock_set_unbounded (self->router);
@@ -290,6 +307,7 @@ class ZGossip(object):
         # from server_initialize:
         #TODO: engine_configure (self, "server/timeout", "1000");
         self.message = ZGossipMsg()
+        self.run()
 
     def server_connect(self, endpoint):
         self.remote = zmq.Socket(self.ctx, zmq.DEALER)
@@ -379,7 +397,8 @@ class ZGossip(object):
             # determine if we need to bind_to_random_port("tcp://*")
             # how to get the port number?
             endpoint = request.pop(0).decode('UTF-8')
-            self.port = self.router.bind_to_random_port(endpoint)
+            self.port = self.router.bind(endpoint)
+            logger.debug("Bound to {0} port {1}".format(endpoint, self.port))
             # TODO: handle error??
         elif command == "PORT":
             self.pipe.send_unicode("PORT", zmq.SNDMORE)
@@ -420,7 +439,8 @@ class ZGossip(object):
     def handle_protocol(self):
         # We process as many messages as we can, to reduce the overhead
         # of polling and the reactor:
-        while self.router.getsockopt(zmq.EVENTS):
+        logger.debug("Handle protocol")
+        while self.router.getsockopt(zmq.EVENTS) & zmq.POLLIN:
             self.message.recv(self.router)
             # TODO: use binary hashing on routing_id
             import codecs
@@ -428,14 +448,18 @@ class ZGossip(object):
             client = self.clients.get(hashkey)
             if client == None:
                 # TODO:
-                client = new_client
-                self.clients[hashkey] = client_is_modern
+                client = Client(self, self.message.routing_id)
+                self.clients[hashkey] = client
             if client.ticket:
                 # TODO: Reset a ticket timer, which moves it to the end of the ticket list and
                 # resets its execution time. This is a very fast operation.
                 #zloop_ticket_reset (zloop_t *self, void *handle);
                 #zloop_ticket_reset (self->loop, client->ticket);
                 pass
+            # Pass to client state machine
+            client.execute(client._get_event(self.message))
+
+        logger.debug("end handle protocol")
             
 
     # Handle messages coming from remotes
@@ -467,20 +491,21 @@ class ZGossip(object):
         
         while not self.terminated:
             timeout = 1
-            if self.transmit:
-                timeout = self.ping_at - time.time()
-                if timeout < 0:
-                    timeout = 0
-            # Poll on API pipe and on UDP socket
+            #if self.transmit:
+            #    timeout = self.ping_at - time.time()
+            #    if timeout < 0:
+            #        timeout = 0
+            # Poll on API pipe and on router socket
             items = dict(self.poller.poll(timeout * 1000))
             if self.pipe in items and items[self.pipe] == zmq.POLLIN:
                 self.handle_pipe()
-            if self.udpsock.fileno() in items and items[self.udpsock.fileno()] == zmq.POLLIN:
-                self.handle_udp()
+            if self.router in items and items[self.router] == zmq.POLLIN:
+                self.handle_protocol()
 
-            if self.transmit and time.time() >= self.ping_at:
-                self.send_beacon()
-                self.ping_at = time.time() + self.interval
+            #if self.transmit and time.time() >= self.ping_at:
+            #    self.send_beacon()
+            #    self.ping_at = time.time() + self.interval
 
             if self.terminated:
                 break
+        logger.debug("finished")

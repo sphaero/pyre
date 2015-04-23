@@ -65,22 +65,22 @@ class ZGossipMsg(object):
         Blocks if there is no message waiting.
         """
         frames = insocket.recv_multipart()
-        if insocket.socket_type == zmq.ROUTER:
+        if insocket.type == zmq.ROUTER:
             self.routing_id = frames.pop(0)
         
         self.struct_data = frames.pop(0)
+        logger.debug(self.struct_data)
         if not self.struct_data:
             logger.debug("Malformed msg")        
             return
         
-        # Get and check protocol signature
-        if self._needle != 0:
-            logger.debug("Message already decoded for protocol signature")
+        # reset needle
+        self._needle = 0
         
         self._ceiling = len(self.struct_data)
         
         signature = self._get_number2()
-        if signature != (0xAAA0 | 0): # TODO 0 or 1 xor
+        if signature != (0xAAA0 | 0): 
             logger.debug("Invalid signature {0}".format(signature))
             return None
         
@@ -93,8 +93,7 @@ class ZGossipMsg(object):
             return
 
         if self.id == ZGossipMsg.HELLO:
-            self.unpack_hello()
-        
+            pass
         elif self.id == ZGossipMsg.PUBLISH:
             self.key = self._get_string()
             self.value = self._get_long_string()
@@ -120,6 +119,7 @@ class ZGossipMsg(object):
         if outsocket.socket_type == zmq.ROUTER:
             outsocket.send(self.routing_id, zmq.SNDMORE)
         
+        self.struct_data = b''
         self._needle = 0
         
         # add signature
