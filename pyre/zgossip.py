@@ -70,22 +70,229 @@
 # Writing this while drunk, turn on enhanced issue scanning
 
 from .zgossip_msg import ZGossipMsg
+import random
+import zmq
 
+class Client(object):
+    # State machine constants
+    start_state = 1
+    have_tuple_state = 2
+    connected_state = 3
+    external_state = 4
+
+    NULL_event = 0
+    terminate_event = 1
+    hello_event = 2
+    ok_event = 3
+    finished_event = 4
+    publish_event = 5
+    forward_event = 6
+    ping_event = 7
+    expired_event = 8
+    
+    state_name = [
+        "(NONE)",
+        "start",
+        "have tuple",
+        "connected",
+        "external"
+        ]
+    event_name = [
+        "(NONE)",
+        "terminate",
+        "HELLO",
+        "ok",
+        "finished",
+        "PUBLISH",
+        "forward",
+        "PING",
+        "expired"
+        ]
+
+    
+    def __init__(self):
+        self.client = None
+        self.server =  None
+        self.hashkey = None
+        self.routing_id = None
+        self.unique_id = None
+        self.state = None
+        self.event = None # current event
+        self.next_event = None
+        self.exception = None
+        self.wakeup = 0
+        self.ticket = None
+        self.log_prefix = None
+
+    def execute(self, event):
+        
+        self.next_event = event
+        # Cancel wakeup timer, if any was pending
+        if (self.wakeup):
+            #TODO: zloop_timer_end (self->server->loop, self->wakeup);
+            self.wakeup = 0
+
+        while self.next_event > 0:
+            self.event = self.next_event
+            self.next_event = Client.NULL_event
+            self.exception = Client.NULL_event
+            if self.server.verbose:
+                logger.debug(Client.state_name[self.state])
+                logger.debug(Client.event_name[self.event])
+
+            if self.state == Client.start_state:
+                if self.event == Client.hello_event:
+                    if not self.exception:
+                        # get first tuple
+                        if self.server.verbose:
+                            logger.debug("get first tuple")
+                        self.get_first_tuple
+                        # weird extra if in gossip engine
+                        self.state = Client.have_tuple_state
+                elif self.event == Client.ping_event:
+                    if not self.exception:
+                        # Send Pong
+                        if (self.server.verbose):
+                            logger.debug("send PONG")
+                        self.server.message.id = ZGossipMsg.PONG
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)
+                elif self.event == Client.expired_event:
+                    if not self.exception:
+                        # terminate
+                        logger.debug("terminate")
+                        self.next_event = Client.terminate_event
+                else:
+                    # Handle unexpected protocol events
+                    if self.exception:
+                        # Send INVALID
+                        logger.debug("send INVALID")
+                        self.server.message.id = ZGossipMsg.INVALID
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)
+                    if not self.exception:
+                        # terminate
+                        logger.debug("terminate by exception")
+                        self.next_event = Client.terminate_event
+            
+            if self.state == Client.have_tuple_state:
+                if self.event == Client.ok_event:
+                    if not self.exception:
+                        # Send PUBLISH
+                        logger.debug("Send PUBLISH")
+                        self.server.message.id = ZGossipMsg.PUBLISH
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)
+                        # weird extra if in gossip engine
+                        # get next tuple
+                        logger.debug("get next tuple")
+                        self.get_next_tuple()
+                elif self.event == Client.finished_event:
+                    if not self.exception: 
+                        self.state = Client.connected_state
+                else:
+                    # Handle unexpected internal events
+                    logger.warning("unhandled event {1} in {2}".format(Client.event_name[self.event], Client.state_name[self.state]))
+            
+            elif self.state == self.connected_state:
+                if self.event == Client.publish_event:
+                    if not self.exception:
+                        # store tuple if new
+                        logger.debug("store tuple if new")
+                elif self.event == Client.forward_event:
+                    if not self.exception:
+                        # get tuple to forward
+                        logger.debug("get tuple to forward")
+                        self.get_tuple_to_forward
+                        # weird extra if in gossip engine
+                        logger.debug("Send PUBLISH")
+                        self.server.message.id = ZGossipMsg.PUBLISH
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)
+                elif self.event == Client.ping_event:
+                    if not self.exception:
+                        # Send PONG
+                        logger.debug("send PONG")
+                        self.server.message.id = ZGossipMsg.PONG
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)
+                elif self.event == Client.expired_event:
+                    if not self.exception:
+                        # terminate
+                        logger.debug("terminte by expire")
+                        self.next_event = Client.terminate_event
+                else:
+                    # Handle unexpected protocol events
+                    if not self.exception:
+                        # Send INVALID
+                        logger.debug("send INVALID")
+                        self.server.message.id = ZGossipMsg.INVALID
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)                   
+                        # weird extra if in gossip engine
+                        logger.debug("terminate")
+                        self.next_event = Client.terminate_event
+
+            elif self.state == Client.external_state:
+                if self.event == Client.ping_event:
+                    if not self.exception:
+                        # Send PONG
+                        logger.debug("send PONG")
+                        self.server.message.id = ZGossipMsg.PONG
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)
+                elif self.event == Client.expired_event:
+                    if not self.exception:
+                        # terminate
+                        logger.debug("terminte by expire")
+                        self.next_event = Client.terminate_event
+                else:
+                    if not self.exception:
+                        # Send INVALID
+                        logger.debug("send INVALID")
+                        self.server.message.id = ZGossipMsg.INVALID
+                        self.server.message.routing_id = self.routing_id
+                        self.server.message.send(self.server.router)                   
+                        # weird extra if in gossip engine
+                        logger.debug("terminate")
+                        self.next_event = Client.terminate_event
+            
+            #  If we had an exception event, interrupt normal programming
+            if self.exception:
+                logger.debug("{0}".format(Client.event_name[self.exception]))
+                self.next_event = self.exception
+            
+            if self.next_event == Client.terminate_event:
+                self.server.clients.remove(self.hashkey)
+            logger.debug("{0}".format(Client.state_name[self.state]))
+    
+
+                
 class ZGossip(object):
     
     def __init__(self, ctx, pipe, *args, **kwargs):
         self.ctx = ctx 
         self.pipe = pipe
         self.config = None
+        self.port = 0
         self.remotes = []
         self.tuples = {}
         self.cur_tuple = None
-        
-        #engine_configure (self, "server/timeout", "1000");
+
+        # from zproto engine
+        self.router = zmq.Socket(self.ctx, zmq.ROUTER)
+        # TODO: zsock_set_unbounded (self->router);
+        self.clients = {}
+        self.client_id = random.randint(0,1000)
+        self.timeout = None
+        self.verbose = True
+        self.log_prefix = ""
+        # from server_initialize:
+        #TODO: engine_configure (self, "server/timeout", "1000");
         self.message = ZGossipMsg()
 
     def server_connect(self, endpoint):
-        self.remote = zmq.socket(ctx, zmq.DEALER)
+        self.remote = zmq.Socket(self.ctx, zmq.DEALER)
         # Never block on sending; we use an infinite HWM and buffer as many
         # messages as needed in outgoing pipes. Note that the maximum number
         # is the overall tuple set size.
@@ -153,6 +360,84 @@ class ZGossip(object):
 
     # Lots of stuff here I don't know what to do with yet
     
+    # from zgossip_engine
+    def handle_pipe(self):
+        #  Get just the commands off the pipe
+        request = self.pipe.recv_multipart()
+        command = request.pop(0).decode('UTF-8')
+        if not command:
+            return -1                  #  Interrupted
+
+        if self.verbose:
+            logger.debug("API command={0}".format(command))
+
+        if command == "VERBOSE":
+            self.verbose = True
+        elif command == "$TERM":
+            self.terminated = True
+        elif command == "BIND":
+            # determine if we need to bind_to_random_port("tcp://*")
+            # how to get the port number?
+            endpoint = request.pop(0).decode('UTF-8')
+            self.port = self.router.bind_to_random_port(endpoint)
+            # TODO: handle error??
+        elif command == "PORT":
+            self.pipe.send_unicode("PORT", zmq.SNDMORE)
+            self.pipe.send_unicode(str(self.port))
+            port = struct.unpack('I', request.pop(0))[0]
+            self.configure(port)
+        elif command == "CONFIGURE":
+            # TODO: ZConfig class
+            filename = request.pop(0).decode('UTF-8')
+            self.config.load(filename)
+            #self.config = zconfig_load (filename)
+            #s_server_config_service (self);
+            #self->server.config = self->config
+        elif command == "SET":
+            # TODO: ZConfig class
+            path = request.pop(0).decode('UTF-8')
+            value = request.pop(0).decode('UTF-8')
+            self.config.put(path, value)
+        elif command == "SAVE":
+            self.transmit = None
+            filename = request.pop(0).decode('UTF-8')
+            self.config.save(filename)
+        # Custom ZGossip methods
+        elif command == "CONNECT":
+            endpoint = request.pop(0).decode('UTF-8')
+            self.server_connect(endpoint)
+        elif command == "PUBLISH":
+            key = request.pop(0).decode('UTF-8')
+            value = request.pop(0).decode('UTF-8')
+            server_accept(key, value)
+        elif command == "STATUS":
+            #  Return number of tuples we have stored
+            self.pipe.send_unicode("STATUS", zmq.SNDMORE)
+            self.pipe.send_unicode(str(len(self.tuples)))            
+        else:
+            logger.error("unkown gossip method: {0}".format(command))
+
+    def handle_protocol(self):
+        # We process as many messages as we can, to reduce the overhead
+        # of polling and the reactor:
+        while self.router.getsockopt(zmq.EVENTS):
+            self.message.recv(self.router)
+            # TODO: use binary hashing on routing_id
+            import codecs
+            hashkey = codecs.encode(self.message.routing_id, 'hex')
+            client = self.clients.get(hashkey)
+            if client == None:
+                # TODO:
+                client = new_client
+                self.clients[hashkey] = client_is_modern
+            if client.ticket:
+                # TODO: Reset a ticket timer, which moves it to the end of the ticket list and
+                # resets its execution time. This is a very fast operation.
+                #zloop_ticket_reset (zloop_t *self, void *handle);
+                #zloop_ticket_reset (self->loop, client->ticket);
+                pass
+            
+
     # Handle messages coming from remotes
     def remote_handler(self, remote):
         msg = self.gossip.recv()
@@ -166,3 +451,36 @@ class ZGossip(object):
         
         elif msg.id == ZGossipMsg.PONG:
             pass    # Do nothing with PONGs
+
+    def run(self):
+        self.pipe.signal()
+
+        # engine_set_monitor() 
+        # Register monitor function that will be called at regular intervals
+        # by the server engine
+        
+        # Set up handler for the two main sockets the server uses
+        
+        self.poller = zmq.Poller()
+        self.poller.register(self.pipe, zmq.POLLIN)
+        self.poller.register(self.router, zmq.POLLIN)
+        
+        while not self.terminated:
+            timeout = 1
+            if self.transmit:
+                timeout = self.ping_at - time.time()
+                if timeout < 0:
+                    timeout = 0
+            # Poll on API pipe and on UDP socket
+            items = dict(self.poller.poll(timeout * 1000))
+            if self.pipe in items and items[self.pipe] == zmq.POLLIN:
+                self.handle_pipe()
+            if self.udpsock.fileno() in items and items[self.udpsock.fileno()] == zmq.POLLIN:
+                self.handle_udp()
+
+            if self.transmit and time.time() >= self.ping_at:
+                self.send_beacon()
+                self.ping_at = time.time() + self.interval
+
+            if self.terminated:
+                break

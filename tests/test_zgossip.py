@@ -28,7 +28,7 @@ class ZGossipTest(unittest.TestCase):
         self.node1.send_unicode("inproc://zgossip")
         
         client = zmq.Socket(ctx, zmq.DEALER)
-        client.set_sockopt(zmq.RCVTMEO, 2000)
+        client.setsockopt(zmq.RCVTIMEO, 2000)
         client.connect("inproc://zgossip")
         
     # end setUp
