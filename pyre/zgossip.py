@@ -101,7 +101,7 @@ class Client(object):
         "external"
         ]
     event_name = [
-        "(NONE)",
+        "NONE",
         "terminate",
         "HELLO",
         "ok",
@@ -119,14 +119,38 @@ class Client(object):
         self.hashkey = None
         self.routing_id = routing_id
         self.unique_id = None
-        self.state = 0
+        self.state = Client.start_state
         self.event = Client.NULL_event # current event
         self.next_event = None
         self.exception = None
         self.wakeup = 0
         self.ticket = None
         self.log_prefix = None
-        
+        self._tuples_iter = iter({})
+    
+    def get_first_tuple(self):
+        self.tuples_iter = iter(self.server.tuples.items())
+        try:
+            key, val = next(self._tuples_iter)
+        except StopIteration:
+            self.next_event = Client.finished_event
+            return
+        else:
+            self.server.message.key = key
+            self.server.message.value = val
+            self.next_event = Client.ok_event
+    
+    def get_next_tuple(self):
+        try:
+            key, val = next(self._tuples_iter)
+        except StopIteration:
+            self.next_event = Client.finished_event
+            return
+        else:
+            self.server.message.key = key
+            self.server.message.value = val
+            self.next_event = Client.ok_event
+    
     # TODO make a LUT
     # similar to s_protocol_event
     def _get_event(self, msg):
@@ -153,8 +177,7 @@ class Client(object):
             self.next_event = Client.NULL_event
             self.exception = Client.NULL_event
             if self.server.verbose:
-                logger.debug(Client.state_name[self.state])
-                logger.debug(Client.event_name[self.event])
+                logger.debug("Client state: {0}, event: {1}".format(Client.state_name[self.state], Client.event_name[self.event]))
 
             if self.state == Client.start_state:
                 if self.event == Client.hello_event:
@@ -162,7 +185,7 @@ class Client(object):
                         # get first tuple
                         if self.server.verbose:
                             logger.debug("get first tuple")
-                        self.get_first_tuple
+                        self.get_first_tuple()
                         # weird extra if in gossip engine
                         self.state = Client.have_tuple_state
                 elif self.event == Client.ping_event:
@@ -191,7 +214,7 @@ class Client(object):
                         logger.debug("terminate by exception")
                         self.next_event = Client.terminate_event
             
-            if self.state == Client.have_tuple_state:
+            elif self.state == Client.have_tuple_state:
                 if self.event == Client.ok_event:
                     if not self.exception:
                         # Send PUBLISH
@@ -208,7 +231,7 @@ class Client(object):
                         self.state = Client.connected_state
                 else:
                     # Handle unexpected internal events
-                    logger.warning("unhandled event {1} in {2}".format(Client.event_name[self.event], Client.state_name[self.state]))
+                    logger.warning("unhandled event {0} in {1}".format(Client.event_name[self.event], Client.state_name[self.state]))
             
             elif self.state == self.connected_state:
                 if self.event == Client.publish_event:

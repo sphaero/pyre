@@ -69,7 +69,7 @@ class ZGossipMsg(object):
             self.routing_id = frames.pop(0)
         
         self.struct_data = frames.pop(0)
-        logger.debug(self.struct_data)
+        logger.debug("recv data: {0}".format(self.struct_data))
         if not self.struct_data:
             logger.debug("Malformed msg")        
             return

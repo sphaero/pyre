@@ -46,7 +46,7 @@ class ZGossipTest(unittest.TestCase):
         msg.id = ZGossipMsg.PING
         msg.send(self.client)
         msg.recv(self.client)
-        assertTrue(msg.id == ZGossipMsg.PONG)
+        self.assertTrue(msg.id == ZGossipMsg.PONG)
 
 # end ZGossipTest
 
@@ -54,12 +54,13 @@ if __name__ == '__main__':
 
     #print(logging.Logger.manager.loggerDict)
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    logger.addHandler(ch)
-    logging.getLogger("pyre.zgossip").setLevel(logging.DEBUG)
-    logging.getLogger("pyre.zgossip_msg").setLevel(logging.DEBUG)
+    logging.basicConfig(level=logging.DEBUG)
+    #logger.setLevel(logging.DEBUG)
+    #ch = logging.StreamHandler()
+    #ch.setLevel(logging.DEBUG)
+    #logger.addHandler(ch)
+    #logging.getLogger("pyre.zgossip").setLevel(logging.DEBUG)
+    #logging.getLogger("pyre.zgossip_msg").setLevel(logging.DEBUG)
     
     try:
         unittest.main()
