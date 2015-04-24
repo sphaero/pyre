@@ -151,6 +151,17 @@ class Client(object):
             self.server.message.value = val
             self.next_event = Client.ok_event
     
+    def store_if_new(self):
+        self.server.server_accept(self.server.message.key, self.server.message.value)
+    
+    def get_tuple_to_forward(self):
+        #  Hold this in server.cur_tuple so it's available to all
+        #  clients; the whole broadcast operation happens in one thread
+        #  so there's no risk of confusion here.
+        key, val = self.server.cur_tuple
+        self.server.message.key = key
+        self.server.message.value = val
+        
     # TODO make a LUT
     # similar to s_protocol_event
     def _get_event(self, msg):
@@ -333,12 +344,12 @@ class ZGossip(object):
         self.run()
 
     def server_connect(self, endpoint):
-        self.remote = zmq.Socket(self.ctx, zmq.DEALER)
+        remote = zmq.Socket(self.ctx, zmq.DEALER)
         # Never block on sending; we use an infinite HWM and buffer as many
         # messages as needed in outgoing pipes. Note that the maximum number
         # is the overall tuple set size.
-        self.remote.set_hwm(0)
-        self.remote.connect(endpoint)
+        remote.set_hwm(0)
+        remote.connect(endpoint)
             
         # Send HELLO and then PUBLISH for each tuple we have
         gossip = ZGossipMsg(ZGossipMsg.HELLO)
@@ -349,11 +360,12 @@ class ZGossip(object):
             gossip.set_value(value)
             gossip.send(remote)
         # Now monitor this remote for incoming messages
-        self.handle_socket()
+        self.poller.register(remote)
+        self.remotes.append(remote)
         #TODO: WHAT IS THIS? zlistx_add_end (self->remotes, remote);
         
     # Process an incoming tuple on this server.
-    def server_accept(key, value):
+    def server_accept(self, key, value):
         old_val = self.tuples.get(key)
         if old_val == value:
             return      # Duplicate tuple, do nothing
@@ -363,18 +375,18 @@ class ZGossip(object):
         
         # Deliver to calling application
         self.pipe.send_unicode("DELIVER", zmq.SNDMORE)
-        self.pipe.send_unicode(key)
+        self.pipe.send_unicode(key, zmq.SNDMORE)
         self.pipe.send_unicode(value)
         
         # Hold in server context so we can broadcast to all clients
         self.cur_tuple = self.tuples.get(key)
         #TODO: engine_broadcast_event (self, NULL, forward_event);
-        
+
         # Copy new tuple announcement to all remotes
         gossip = ZGossipMsg(ZGossipMsg.PUBLISH)
         for remote in self.remotes:
-            gossip.set_key = key
-            gossip.set_value = value
+            gossip.key = key
+            gossip.value = value
             gossip.send(remote)
 
     # Process server API method, return reply message if any
@@ -451,7 +463,7 @@ class ZGossip(object):
         elif command == "PUBLISH":
             key = request.pop(0).decode('UTF-8')
             value = request.pop(0).decode('UTF-8')
-            server_accept(key, value)
+            self.server_accept(key, value)
         elif command == "STATUS":
             #  Return number of tuples we have stored
             self.pipe.send_unicode("STATUS", zmq.SNDMORE)
@@ -524,6 +536,12 @@ class ZGossip(object):
                 self.handle_pipe()
             if self.router in items and items[self.router] == zmq.POLLIN:
                 self.handle_protocol()
+            
+            # handle remote sockets
+            for sock in items.keys():
+                if sock in self.remotes and items[sock] == zmq.POLLIN:
+                    self.remote_handler(items[sock])
+                    
 
             #if self.transmit and time.time() >= self.ping_at:
             #    self.send_beacon()
